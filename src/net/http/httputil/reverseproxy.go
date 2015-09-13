@@ -35,6 +35,11 @@ type ReverseProxy struct {
 	// If nil, http.DefaultTransport is used.
 	Transport http.RoundTripper
 
+	// This function is called if the Transport proxy returns an error.
+	// If nil, a StatusBadGateway code will be returned and the error
+	// logged to the ErrorLogger
+	TransportErrorHandler func(error, http.ResponseWriter)
+
 	// FlushInterval specifies the flush interval
 	// to flush to the client while copying the
 	// response body.
@@ -123,8 +128,15 @@ func (c *runOnFirstRead) Read(bs []byte) (int, error) {
 
 func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	transport := p.Transport
+	transportErrorHandler := p.TransportErrorHandler
 	if transport == nil {
 		transport = http.DefaultTransport
+	}
+	if transportErrorHandler == nil {
+		transportErrorHandler = func(err error, rw http.ResponseWriter) {
+			p.logf("http: proxy error: %v", err)
+			rw.WriteHeader(http.StatusBadGateway)
+		}
 	}
 
 	outreq := new(http.Request)
@@ -193,8 +205,7 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	res, err := transport.RoundTrip(outreq)
 	if err != nil {
-		p.logf("http: proxy error: %v", err)
-		rw.WriteHeader(http.StatusInternalServerError)
+		transportErrorHandler(err, rw)
 		return
 	}
 
