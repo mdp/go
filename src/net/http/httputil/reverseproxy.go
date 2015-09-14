@@ -36,7 +36,7 @@ type ReverseProxy struct {
 	Transport http.RoundTripper
 
 	// This function is called if the Transport proxy returns an error.
-	// If nil, a StatusBadGateway code will be returned and the error
+	// If nil, a StatusInternalServerError code will be returned and the error
 	// logged to the ErrorLogger
 	TransportErrorHandler func(error, http.ResponseWriter)
 
@@ -135,7 +135,7 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if transportErrorHandler == nil {
 		transportErrorHandler = func(err error, rw http.ResponseWriter) {
 			p.logf("http: proxy error: %v", err)
-			rw.WriteHeader(http.StatusBadGateway)
+			rw.WriteHeader(http.StatusInternalServerError)
 		}
 	}
 

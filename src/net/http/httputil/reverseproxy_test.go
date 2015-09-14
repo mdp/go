@@ -8,8 +8,10 @@ package httputil
 
 import (
 	"bufio"
+	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -280,6 +282,83 @@ func TestReverseProxyCancelation(t *testing.T) {
 		// Get http://127.0.0.1:58079: read tcp 127.0.0.1:58079:
 		//    use of closed network connection
 		t.Fatal("DefaultClient.Do() returned nil error")
+	}
+}
+
+func TestReverseProxyErrorHandler(t *testing.T) {
+	const backendStatus = http.StatusInternalServerError
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		if listener, err = net.Listen("tcp6", "[::1]:0"); err != nil {
+			panic(fmt.Sprintf("httptest: failed to listen on a port: %v", err))
+		}
+	}
+	defer listener.Close()
+
+	go func() {
+		// Simply refuse the connection
+		conn, _ := listener.Accept()
+		conn.Close()
+	}()
+
+	backendURL, err := url.Parse("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyHandler := NewSingleHostReverseProxy(backendURL)
+	frontend := httptest.NewServer(proxyHandler)
+	defer frontend.Close()
+
+	getReq, _ := http.NewRequest("GET", frontend.URL, nil)
+	getReq.Host = "some-name"
+	getReq.Header.Set("Connection", "close")
+	getReq.Close = true
+	res, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if g, e := res.StatusCode, backendStatus; g != e {
+		t.Errorf("got res.StatusCode %d; expected %d", g, e)
+	}
+}
+
+func TestReverseProxyCustomErrorHandler(t *testing.T) {
+	const backendStatus = http.StatusBadGateway
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		if listener, err = net.Listen("tcp6", "[::1]:0"); err != nil {
+			panic(fmt.Sprintf("httptest: failed to listen on a port: %v", err))
+		}
+	}
+	defer listener.Close()
+
+	go func() {
+		// Simply refuse the connection
+		conn, _ := listener.Accept()
+		conn.Close()
+	}()
+
+	backendURL, err := url.Parse("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyHandler := NewSingleHostReverseProxy(backendURL)
+	proxyHandler.TransportErrorHandler = func(_ error, rw http.ResponseWriter) {
+		rw.WriteHeader(http.StatusBadGateway)
+	}
+	frontend := httptest.NewServer(proxyHandler)
+	defer frontend.Close()
+
+	getReq, _ := http.NewRequest("GET", frontend.URL, nil)
+	getReq.Host = "some-name"
+	getReq.Header.Set("Connection", "close")
+	getReq.Close = true
+	res, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if g, e := res.StatusCode, backendStatus; g != e {
+		t.Errorf("got res.StatusCode %d; expected %d", g, e)
 	}
 }
 
