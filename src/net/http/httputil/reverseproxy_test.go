@@ -285,22 +285,25 @@ func TestReverseProxyCancelation(t *testing.T) {
 	}
 }
 
-func TestReverseProxyErrorHandler(t *testing.T) {
-	const backendStatus = http.StatusInternalServerError
+func badBackend(t *testing.T) net.Listener {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		if listener, err = net.Listen("tcp6", "[::1]:0"); err != nil {
-			panic(fmt.Sprintf("httptest: failed to listen on a port: %v", err))
+			t.Fatal(fmt.Sprintf("httptest: failed to listen on a port: %v", err))
 		}
 	}
-	defer listener.Close()
-
 	go func() {
 		// Simply refuse the connection
 		conn, _ := listener.Accept()
 		conn.Close()
 	}()
+	return listener
+}
 
+func TestReverseProxyErrorHandler(t *testing.T) {
+	const proxyErrorStatus = http.StatusInternalServerError
+	listener := badBackend(t)
+	defer listener.Close()
 	backendURL, err := url.Parse("http://" + listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -317,34 +320,25 @@ func TestReverseProxyErrorHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if g, e := res.StatusCode, backendStatus; g != e {
+	if g, e := res.StatusCode, proxyErrorStatus; g != e {
 		t.Errorf("got res.StatusCode %d; expected %d", g, e)
 	}
 }
 
 func TestReverseProxyCustomErrorHandler(t *testing.T) {
-	const backendStatus = http.StatusBadGateway
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		if listener, err = net.Listen("tcp6", "[::1]:0"); err != nil {
-			panic(fmt.Sprintf("httptest: failed to listen on a port: %v", err))
-		}
-	}
+	const proxyErrorStatus = http.StatusBadGateway
+	const proxyResponse = "A custom error message"
+	listener := badBackend(t)
 	defer listener.Close()
-
-	go func() {
-		// Simply refuse the connection
-		conn, _ := listener.Accept()
-		conn.Close()
-	}()
-
 	backendURL, err := url.Parse("http://" + listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	proxyHandler := NewSingleHostReverseProxy(backendURL)
 	proxyHandler.TransportErrorHandler = func(_ error, rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusBadGateway)
+		rw.Write([]byte(proxyResponse))
 	}
 	frontend := httptest.NewServer(proxyHandler)
 	defer frontend.Close()
@@ -357,8 +351,12 @@ func TestReverseProxyCustomErrorHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if g, e := res.StatusCode, backendStatus; g != e {
+	if g, e := res.StatusCode, proxyErrorStatus; g != e {
 		t.Errorf("got res.StatusCode %d; expected %d", g, e)
+	}
+	bodyBytes, _ := ioutil.ReadAll(res.Body)
+	if g, e := string(bodyBytes), proxyResponse; g != e {
+		t.Errorf("got body %q; expected %q", g, e)
 	}
 }
 
